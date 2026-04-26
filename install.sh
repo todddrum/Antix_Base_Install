@@ -2,6 +2,13 @@
 # =============================================================================
 # AntiX Base Install — Lightweight Desktop + ESP32 Dev + Claude Code
 # Run as root: sudo bash install.sh
+#
+# Tested on AntiX Core 64-bit (sysvinit, not systemd)
+# Fixes applied after first real-world install:
+#   - Node.js via apt instead of NodeSource (NodeSource fails on AntiX)
+#   - Openbox config written via temp files then chowned (heredoc+sudo fix)
+#   - LightDM/NetworkManager enabled via update-rc.d (sysvinit, not systemctl)
+#   - picom removed from autostart (causes lag on older GPUs)
 # =============================================================================
 
 set -e
@@ -45,7 +52,6 @@ apt install -y \
     ghostwriter \
     rofi \
     dunst \
-    picom \
     xarchiver \
     gpicview \
     zathura zathura-pdf-poppler \
@@ -77,6 +83,7 @@ apt install -y pulseaudio pulseaudio-utils pavucontrol
 
 # -----------------------------------------------------------------------------
 # 7. Network — ethernet + WiFi
+# AntiX uses sysvinit — use update-rc.d, not systemctl
 # -----------------------------------------------------------------------------
 log "Installing NetworkManager with WiFi support..."
 apt install -y \
@@ -86,9 +93,7 @@ apt install -y \
     wireless-tools \
     iw
 
-# Disable conflicting network services common on AntiX
-systemctl disable --now networking 2>/dev/null || true
-systemctl enable NetworkManager
+update-rc.d network-manager defaults 2>/dev/null || true
 
 # -----------------------------------------------------------------------------
 # 8. ESP32 / MicroPython development tools
@@ -107,11 +112,10 @@ log "Adding $USERNAME to dialout group (serial port access)..."
 usermod -aG dialout "$USERNAME"
 
 # -----------------------------------------------------------------------------
-# 9. Node.js LTS (via NodeSource)
+# 9. Node.js + npm via apt (NodeSource script fails on AntiX)
 # -----------------------------------------------------------------------------
-log "Installing Node.js LTS..."
-curl -fsSL https://deb.nodesource.com/setup_lts.x | bash -
-apt install -y nodejs
+log "Installing Node.js and npm via apt..."
+apt install -y nodejs npm
 
 node --version
 npm --version
@@ -122,22 +126,20 @@ npm --version
 log "Installing Claude Code CLI..."
 npm install -g @anthropic-ai/claude-code
 
-claude --version
+claude --version || warn "claude --version failed — PATH may need reload, this is normal"
 
 # -----------------------------------------------------------------------------
 # 11. Openbox configuration
+#     Write files as root then chown — avoids heredoc+sudo-u issues
 # -----------------------------------------------------------------------------
 log "Configuring Openbox for $USERNAME..."
 
 mkdir -p "$HOME_DIR/.config/openbox"
 
-# -- Autostart --
+# -- Autostart (picom omitted — causes lag on older GPUs) --
 cat > "$HOME_DIR/.config/openbox/autostart" << 'AUTOSTART'
-# Set background color (no wallpaper daemon needed)
+# Background color
 xsetroot -solid "#1e2127" &
-
-# Compositor — subtle shadows, no screen tearing
-picom --daemon &
 
 # Taskbar / panel
 tint2 &
@@ -238,7 +240,7 @@ chown -R "$USERNAME:$USERNAME" "$HOME_DIR/.config"
 chmod +x "$HOME_DIR/.config/openbox/autostart"
 
 # -----------------------------------------------------------------------------
-# 12. LightDM — Openbox session entry
+# 12. LightDM — Openbox session entry + enable via sysvinit
 # -----------------------------------------------------------------------------
 if [ ! -f /usr/share/xsessions/openbox.desktop ]; then
     cat > /usr/share/xsessions/openbox.desktop << 'SESSION'
@@ -252,7 +254,7 @@ DesktopNames=Openbox
 SESSION
 fi
 
-systemctl enable lightdm
+update-rc.d lightdm defaults
 
 # -----------------------------------------------------------------------------
 # 13. Create Pictures folder for screenshots
@@ -262,15 +264,13 @@ sudo -u "$USERNAME" mkdir -p "$HOME_DIR/Pictures"
 # -----------------------------------------------------------------------------
 # 14. SSHFS — mount main machine's ~/Projects over the network
 #     Main machine hostname: mx.local  (avahi mDNS)
-#     Usage after install:  mount-projects / umount-projects
+#     Usage: mount-projects / umount-projects / projects-status
 # -----------------------------------------------------------------------------
 log "Installing SSHFS and Avahi (mDNS)..."
 apt install -y sshfs avahi-daemon
 
-# Mount point for the remote Projects folder
 sudo -u "$USERNAME" mkdir -p "$HOME_DIR/Projects"
 
-# Add mount/umount aliases to todd's .bashrc
 cat >> "$HOME_DIR/.bashrc" << 'ALIASES'
 
 # --- Remote Projects mount (main machine via SSHFS) ---
@@ -281,7 +281,7 @@ ALIASES
 
 chown "$USERNAME:$USERNAME" "$HOME_DIR/.bashrc"
 
-# Generate SSH keypair for todd on this machine (if not already present)
+# Generate SSH keypair for todd (if not already present)
 if [ ! -f "$HOME_DIR/.ssh/id_ed25519" ]; then
     log "Generating SSH keypair for $USERNAME..."
     sudo -u "$USERNAME" ssh-keygen -t ed25519 -f "$HOME_DIR/.ssh/id_ed25519" -N "" -C "todd@antix-laptop"
@@ -309,17 +309,11 @@ echo ""
 echo "  --- SSH key setup (one-time, for Projects mount) ---"
 echo "  7.  On THIS laptop, copy your public key:"
 echo "        cat ~/.ssh/id_ed25519.pub"
-echo "  8.  On the MAIN machine (mx), run:"
-echo "        echo 'PASTE_KEY_HERE' >> ~/.ssh/authorized_keys"
-echo "      Or use ssh-copy-id from this laptop:"
+echo "  8.  On the MAIN machine (mx), authorize it:"
 echo "        ssh-copy-id todd@mx.local"
-echo "  9.  Test SSH connection:"
-echo "        ssh todd@mx.local"
-echo "  10. Mount Projects folder:"
-echo "        mount-projects"
-echo "  11. Verify:"
-echo "        projects-status"
-echo "        ls ~/Projects/"
+echo "  9.  Test: ssh todd@mx.local"
+echo "  10. Mount: mount-projects"
+echo "  11. Verify: projects-status && ls ~/Projects/"
 echo ""
 echo "  --- ESP32 ---"
 echo "  12. Plug in ESP32, then:"
