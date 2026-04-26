@@ -22,7 +22,7 @@ connect your ethernet cable and run these three commands:
 
 ```bash
 # 1. Download the install script
-wget https://raw.githubusercontent.com/todddrum/Antix_Base_Install/main/install.sh
+wget https://raw.githubusercontent.com/todddrum/Antix_Base_Install/master/install.sh
 
 # 2. Run it as root
 sudo bash install.sh
